@@ -292,6 +292,42 @@ class TestPaymentRequest(ERPNextTestSuite):
 		purchase_invoice.load_from_db()
 		self.assertEqual(purchase_invoice.status, "Paid")
 
+	def test_on_payment_authorized_finalizes_payment_request(self):
+		# Payment gateways report a successful payment by calling on_payment_authorized()
+		# on the reference document (the Payment Request). It must finalize the request:
+		# create the Payment Entry and mark the request Paid. Without it a captured
+		# payment leaves the request stuck in "Requested" with the invoice unpaid (#204).
+		si = create_sales_invoice(currency="INR")
+		pr = make_payment_request(
+			dt="Sales Invoice",
+			dn=si.name,
+			recipient_id="saurabh@erpnext.com",
+			mute_email=1,
+			payment_gateway_account="_Test Gateway - INR - _TC",
+			submit_doc=1,
+			return_doc=1,
+		)
+		self.assertEqual(pr.status, "Requested")
+		self.assertFalse(
+			frappe.db.exists("Payment Entry Reference", {"reference_name": si.name, "docstatus": 1})
+		)
+
+		pr.run_method("on_payment_authorized", "Completed")
+
+		pr.reload()
+		si.reload()
+		self.assertEqual(pr.status, "Paid")
+		self.assertEqual(si.outstanding_amount, 0)
+		self.assertTrue(
+			frappe.db.exists("Payment Entry Reference", {"reference_name": si.name, "docstatus": 1})
+		)
+
+		# Idempotent: a duplicated webhook/redirect must not create a second Payment Entry.
+		pr.run_method("on_payment_authorized", "Completed")
+		self.assertEqual(
+			frappe.db.count("Payment Entry Reference", {"reference_name": si.name, "docstatus": 1}), 1
+		)
+
 	def test_payment_entry(self):
 		frappe.db.set_value(
 			"Company", "_Test Company", "exchange_gain_loss_account", "_Test Exchange Gain/Loss - _TC"

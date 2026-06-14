@@ -496,6 +496,26 @@ class PaymentRequest(Document):
 			}
 		)
 
+	def on_payment_authorized(self, status=None):
+		"""Finalize the payment request when a gateway reports a successful payment.
+
+		Payment gateways (in the `payments` app) signal a completed/authorized payment
+		by calling `run_method("on_payment_authorized", status)` on the reference
+		document. For a Payment Request that means creating the Payment Entry and
+		marking the request Paid; without it a captured payment leaves the request in
+		`Requested` with the invoice unpaid.
+
+		Idempotent: the gateway redirect and the webhook can both fire, so it is a
+		no-op once the request is already Paid.
+		"""
+		if status not in ("Authorized", "Completed"):
+			return
+
+		if self.status == "Paid":
+			return
+
+		self.set_as_paid()
+
 	def set_as_paid(self):
 		if self.payment_channel == "Phone":
 			self.db_set({"status": "Paid", "outstanding_amount": 0})
